@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:pos_app/models/product.dart';
+import 'package:pos_app/models/product_unit.dart';
 import 'package:pos_app/views/add_product_screen.dart';
 import 'package:provider/provider.dart';
 import '../view_models/product_view_model.dart';
@@ -43,6 +45,7 @@ class _POSScreenState extends State<POSScreen> {
       final product = productViewModel.products.firstWhere(
         (p) => p.barcode == barcode,
       );
+      // Quick add base unit
       context.read<CartViewModel>().addToCart(product);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added ${product.name}')),
@@ -54,14 +57,62 @@ class _POSScreenState extends State<POSScreen> {
     }
   }
 
-  void _addToCart(Product product) {
-    context.read<CartViewModel>().addToCart(product);
+  void _addToCart(Product product, {ProductUnit? unit}) {
+    context.read<CartViewModel>().addToCart(product, unit: unit);
+  }
+
+  void _showUnitSelectionDialog(Product product) {
+    if (product.sellingPrice == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please set selling price first!')),
+      );
+      return;
+    }
+    
+    // If no extra units, just add base
+    if (product.additionalUnits.isEmpty) {
+      _addToCart(product);
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: Text('Select Unit for ${product.name}', style: const TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          ListTile(
+            leading: const Icon(Icons.circle, size: 10),
+            title: Text('${product.unit} (Base)'),
+            subtitle: Text('\$${product.sellingPrice}'),
+            onTap: () {
+              Navigator.pop(context);
+              _addToCart(product);
+            },
+          ),
+          ...product.additionalUnits.map((unit) {
+            final price = unit.sellingPrice ?? (product.sellingPrice * unit.factor);
+            return ListTile(
+              leading: const Icon(Icons.circle_outlined, size: 10),
+              title: Text(unit.name),
+              subtitle: Text('$price (${unit.factor} ${product.unit})'),
+              onTap: () {
+                Navigator.pop(context);
+                _addToCart(product, unit: unit);
+              },
+            );
+          }),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('POS Terminal')),
+      appBar: AppBar(title: const Text('POS Terminal / Sales')),
       body: Column(
         children: [
           // Search and Scan Area
@@ -108,11 +159,21 @@ class _POSScreenState extends State<POSScreen> {
                      itemBuilder: (context, index) {
                        final product = filtered[index];
                        return ListTile(
+                         leading: ClipRRect(
+                           borderRadius: BorderRadius.circular(8.0),
+                           child: product.imagePath != null 
+                             ? Image.file(File(product.imagePath!), width: 50, height: 50, fit: BoxFit.cover) 
+                             : Container(
+                                 width: 50, height: 50,
+                                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                 child: const Icon(Icons.inventory_2),
+                               ),
+                         ),
                          title: Text(product.name),
                          subtitle: Text('${product.stockQuantity} in stock'),
                          trailing: Text('\$${product.sellingPrice}'),
                          onTap: () {
-                           _addToCart(product);
+                           _showUnitSelectionDialog(product);
                            _searchController.clear();
                            setState(() {});
                          },
@@ -141,22 +202,60 @@ class _POSScreenState extends State<POSScreen> {
                   itemCount: cart.items.length,
                   itemBuilder: (context, index) {
                     final item = cart.items[index];
-                    return ListTile(
-                      title: Text(item.product.name),
-                      subtitle: Text('${item.quantity} x \$${item.product.sellingPrice}'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('\$${item.subtotal.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          IconButton(
-                            icon: const Icon(Icons.remove_circle_outline),
-                            onPressed: () => cart.removeFromCart(item.product),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.add_circle_outline),
-                            onPressed: () => cart.addToCart(item.product),
-                          ),
-                        ],
+                    // Calculate available stock in the selected unit
+                    final double stockInSelectedUnit = item.product.getStockInUnit(item.unit);
+                    final String unitName = item.unit?.name ?? item.product.unit;
+                    
+                    return Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: ListTile(
+                        leading: ClipRRect(
+                           borderRadius: BorderRadius.circular(8.0),
+                           child: item.product.imagePath != null 
+                             ? Image.file(File(item.product.imagePath!), width: 50, height: 50, fit: BoxFit.cover) 
+                             : Container(
+                                 width: 50, height: 50,
+                                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                 child: const Icon(Icons.shopping_bag),
+                               ),
+                        ),
+                        title: Text('${item.product.name} ($unitName)'),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('\$${item.subtotal.toStringAsFixed(2)}'),
+                            // Stock Left Display (Requested Feature)
+                            Text(
+                              'Stock Left: ${(stockInSelectedUnit - item.quantity).toStringAsFixed(1)} $unitName',
+                              style: TextStyle(
+                                color: (stockInSelectedUnit - item.quantity) < 0 ? Colors.red : Colors.green,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12
+                              ),
+                            ),
+                          ],
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.remove_circle_outline),
+                              onPressed: () => cart.removeFromCart(item.product, unit: item.unit),
+                            ),
+                            SizedBox(
+                              width: 30, // Fixed width for quantity
+                              child: Text('${item.quantity}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add_circle_outline),
+                              onPressed: () {
+                                // Check stock before adding visually?
+                                // Logic in VM handles updates, but UI feedback is good.
+                                cart.addToCart(item.product, unit: item.unit);
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -170,26 +269,34 @@ class _POSScreenState extends State<POSScreen> {
             builder: (context, cart, child) {
               return Container(
                 padding: const EdgeInsets.all(16.0),
-                color: Colors.grey[200],
+                color: Theme.of(context).colorScheme.surfaceContainer,
                 child: Column(
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text('Total:', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                        Text('\$${cart.totalAmount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.green)),
+                        Text('\$${cart.totalAmount.toStringAsFixed(2)}', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
                       ],
                     ),
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
-                          backgroundColor: Theme.of(context).primaryColor,
-                          foregroundColor: Colors.white,
                         ),
                         onPressed: cart.items.isEmpty ? null : () async {
+                           // Validate selling price
+                           for(var item in cart.items) {
+                             if(item.product.sellingPrice <= 0 && (item.unit == null || (item.unit!.sellingPrice == null || item.unit!.sellingPrice! <= 0))) {
+                               ScaffoldMessenger.of(context).showSnackBar(
+                                 SnackBar(content: Text('Cannot checkout: ${item.product.name} has no selling price!')),
+                               );
+                               return;
+                             }
+                           }
+
                            // Capture items before checkout clears them if we want to print
                            final currentItems = List<CartItem>.from(cart.items);
                            final total = cart.totalAmount;

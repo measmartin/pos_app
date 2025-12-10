@@ -4,6 +4,8 @@ import 'services/notification_service.dart';
 import 'view_models/product_view_model.dart';
 import 'view_models/cart_view_model.dart';
 import 'view_models/journal_view_model.dart';
+import 'view_models/unit_view_model.dart';
+import 'view_models/history_view_model.dart';
 import 'views/home_screen.dart';
 
 void main() async {
@@ -16,6 +18,8 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ProductViewModel()),
         ChangeNotifierProvider(create: (_) => CartViewModel()),
         ChangeNotifierProvider(create: (_) => JournalViewModel()),
+        ChangeNotifierProvider(create: (_) => UnitViewModel()),
+        ChangeNotifierProvider(create: (_) => HistoryViewModel()),
       ],
       child: const MyApp(),
     ),

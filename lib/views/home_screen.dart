@@ -1,53 +1,61 @@
 import 'package:flutter/material.dart';
+import 'dashboard_screen.dart';
 import 'pos_screen.dart';
 import 'product_list_screen.dart';
 import 'journal_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _selectedIndex = 0;
+
+  final List<Widget> _screens = const [
+    DashboardScreen(),
+    POSScreen(),
+    ProductListScreen(),
+    JournalScreen(),
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('POS System'),
-      ),
-      body: GridView.count(
-        crossAxisCount: 2,
-        padding: const EdgeInsets.all(16.0),
-        children: [
-          _buildMenuCard(context, 'POS Terminal', Icons.point_of_sale, () {
-             Navigator.push(context, MaterialPageRoute(builder: (_) => const POSScreen()));
-          }),
-          _buildMenuCard(context, 'Products', Icons.inventory, () {
-             Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductListScreen()));
-          }),
-          _buildMenuCard(context, 'Inventory', Icons.warehouse, () {
-             // Inventory is basically Product List for now, or a specific stock view
-             Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductListScreen()));
-          }),
-          _buildMenuCard(context, 'Journals', Icons.book, () {
-             Navigator.push(context, MaterialPageRoute(builder: (_) => const JournalScreen()));
-          }),
+      // We don't need an AppBar here because each screen can have its own, 
+      // or the dashboard has one.
+      body: _screens[_selectedIndex],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (int index) {
+          setState(() {
+            _selectedIndex = index;
+          });
+        },
+        destinations: const <NavigationDestination>[
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: 'Dashboard',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.point_of_sale_outlined),
+            selectedIcon: Icon(Icons.point_of_sale),
+            label: 'POS',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.inventory_2_outlined),
+            selectedIcon: Icon(Icons.inventory_2),
+            label: 'Products',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.book_outlined),
+            selectedIcon: Icon(Icons.book),
+            label: 'Journal',
+          ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildMenuCard(BuildContext context, String title, IconData icon, VoidCallback onTap) {
-    return Card(
-      elevation: 4.0,
-      margin: const EdgeInsets.all(8.0),
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 48.0, color: Theme.of(context).primaryColor),
-            const SizedBox(height: 16.0),
-            Text(title, style: Theme.of(context).textTheme.titleLarge),
-          ],
-        ),
       ),
     );
   }
