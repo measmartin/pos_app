@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../view_models/history_view_model.dart';
+import '../widgets/transaction/transaction_card.dart';
+import '../widgets/common/empty_state.dart';
+import '../widgets/dialogs/confirmation_dialog.dart';
 
 class PurchaseHistoryScreen extends StatefulWidget {
   const PurchaseHistoryScreen({super.key});
@@ -19,27 +21,23 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
     });
   }
 
-  void _showDeleteConfirmation(int id, String productName, double total) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Void Purchase'),
-        content: Text('Are you sure you want to void this purchase of $productName?\n\nAmount: \$${total.toStringAsFixed(2)}\n\nThis will remove the stock.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await context.read<HistoryViewModel>().deletePurchase(id);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Purchase Voided')));
-              }
-            },
-            child: const Text('Void', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+  Future<void> _handleDeletePurchase(int id, String productName, double total) async {
+    final confirmed = await ConfirmationDialog.show(
+      context,
+      title: 'Void Purchase',
+      message: 'Are you sure you want to void this purchase of $productName?\n\nAmount: \$${total.toStringAsFixed(2)}\n\nThis will remove the stock.',
+      confirmText: 'Void',
+      isDangerous: true,
     );
+
+    if (confirmed == true && mounted) {
+      await context.read<HistoryViewModel>().deletePurchase(id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Purchase Voided')),
+        );
+      }
+    }
   }
 
   @override
@@ -49,7 +47,10 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
       body: Consumer<HistoryViewModel>(
         builder: (context, vm, child) {
           if (vm.purchases.isEmpty) {
-            return const Center(child: Text('No purchase history.'));
+            return const EmptyState(
+              icon: Icons.inventory_2_outlined,
+              message: 'No purchase history yet\n\nPurchases will appear here',
+            );
           }
           return ListView.builder(
             itemCount: vm.purchases.length,
@@ -63,24 +64,14 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
               final cost = purchase['cost_price'] as double;
               final total = quantity * cost;
 
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: ListTile(
-                  leading: const CircleAvatar(child: Icon(Icons.inventory_2)),
-                  title: Text(productName),
-                  subtitle: Text('$quantity units @ \$$cost\n${DateFormat('MMM dd, hh:mm a').format(date)}'),
-                  isThreeLine: true,
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('\$${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () => _showDeleteConfirmation(id, productName, total),
-                      ),
-                    ],
-                  ),
-                ),
+              return TransactionCard(
+                type: TransactionType.purchase,
+                productName: productName,
+                quantity: quantity,
+                price: cost,
+                total: total,
+                date: date,
+                onDelete: () => _handleDeletePurchase(id, productName, total),
               );
             },
           );

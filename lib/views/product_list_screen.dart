@@ -1,7 +1,11 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../view_models/product_view_model.dart';
+import '../widgets/product/product_card.dart';
+import '../widgets/common/empty_state.dart';
+import '../widgets/dialogs/confirmation_dialog.dart';
+import '../widgets/dialogs/stock_adjustment_dialog.dart';
+import '../theme/app_spacing.dart';
 import 'add_product_screen.dart';
 
 class ProductListScreen extends StatefulWidget {
@@ -30,99 +34,72 @@ class _ProductListScreenState extends State<ProductListScreen> {
       body: Consumer<ProductViewModel>(
         builder: (context, viewModel, child) {
           if (viewModel.products.isEmpty) {
-            return const Center(child: Text('No products found. Add one!'));
+            return EmptyState(
+              message: 'No products found. Add one!',
+              icon: Icons.inventory_2,
+              actionLabel: 'Add Product',
+              onAction: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AddProductScreen(),
+                    fullscreenDialog: true,
+                  ),
+                );
+              },
+            );
           }
+          
           return GridView.builder(
-            padding: const EdgeInsets.all(8.0),
+            padding: const EdgeInsets.all(AppSpacing.sm),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              childAspectRatio: 0.75, // Adjust based on content
+              childAspectRatio: 0.75,
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
             ),
             itemCount: viewModel.products.length,
             itemBuilder: (context, index) {
               final product = viewModel.products[index];
-              return Card(
-                clipBehavior: Clip.antiAlias,
-                elevation: 2,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: InkWell(
-                  onTap: () {
-                    // Navigate to edit (reuse add screen with arguments)
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => AddProductScreen(product: product),
-                        fullscreenDialog: true,
-                      ),
-                    );
-                  },
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Product Image
-                      Expanded(
-                        child: product.imagePath != null
-                            ? Image.file(
-                                File(product.imagePath!),
-                                fit: BoxFit.cover,
-                              )
-                            : Container(
-                                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                child: Icon(
-                                  Icons.inventory_2,
-                                  size: 48,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                      ),
-                      // Product Details
-                      Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              product.name,
-                              style: Theme.of(context).textTheme.titleMedium,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '\$${product.sellingPrice.toStringAsFixed(2)}',
-                              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Theme.of(context).colorScheme.primary,
-                                  ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Stock: ${product.stockQuantity} ${product.unit}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Actions (Delete)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 4.0, bottom: 4.0),
-                          child: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () {
-                              viewModel.deleteProduct(product.id!);
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              return ProductCard(
+                product: product,
+                layout: ProductCardLayout.grid,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => AddProductScreen(product: product),
+                      fullscreenDialog: true,
+                    ),
+                  );
+                },
+                onAdjustStock: () async {
+                  await showDialog(
+                    context: context,
+                    builder: (_) => StockAdjustmentDialog(product: product),
+                  );
+                },
+                onDelete: () async {
+                  final confirmed = await ConfirmationDialog.show(
+                    context,
+                    title: 'Delete Product',
+                    message: 'Are you sure you want to delete "${product.name}"? This action cannot be undone.',
+                    confirmText: 'Delete',
+                    icon: Icons.delete_outline,
+                    isDestructive: true,
+                  );
+                  
+                  if (confirmed && context.mounted) {
+                    await viewModel.deleteProduct(product.id!);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('${product.name} deleted')),
+                      );
+                    }
+                  }
+                },
+                showStock: true,
+                showPrice: true,
               );
             },
           );

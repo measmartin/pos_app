@@ -1,14 +1,17 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
 import '../models/product.dart';
 import '../view_models/product_view_model.dart';
 import '../view_models/unit_view_model.dart';
-import 'unit_management_screen.dart'; // Import Unit Management Screen
+import '../services/barcode_service.dart';
+import '../widgets/product/image_picker_avatar.dart';
+import '../widgets/forms/custom_text_field.dart';
+import '../widgets/forms/currency_text_field.dart';
+import '../widgets/forms/barcode_field.dart';
+import '../widgets/common/spacing.dart';
+import '../theme/app_spacing.dart';
+import '../screens/simple_scanner_screen.dart';
+import 'unit_management_screen.dart';
 
 class AddProductScreen extends StatefulWidget {
   final Product? product;
@@ -21,13 +24,15 @@ class AddProductScreen extends StatefulWidget {
 
 class _AddProductScreenState extends State<AddProductScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _barcodeService = BarcodeService();
   late TextEditingController _nameController;
   late TextEditingController _barcodeController;
   late TextEditingController _costPriceController;
   late TextEditingController _sellingPriceController;
   late TextEditingController _stockController;
   late TextEditingController _unitController;
-  File? _imageFile;
+  dynamic _imageFile;
+  bool _autoGenerateBarcode = false;
 
   @override
   void initState() {
@@ -39,7 +44,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     _stockController = TextEditingController(text: widget.product?.stockQuantity.toString() ?? '');
     _unitController = TextEditingController(text: widget.product?.unit ?? 'pcs');
     if (widget.product?.imagePath != null) {
-      _imageFile = File(widget.product!.imagePath!);
+      _imageFile = widget.product!.imagePath!;
     }
     
     // Fetch unique units
@@ -59,21 +64,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
     super.dispose();
   }
 
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-
-    if (pickedFile != null) {
-      final appDir = await getApplicationDocumentsDirectory();
-      final fileName = path.basename(pickedFile.path);
-      final savedImage = await File(pickedFile.path).copy('${appDir.path}/$fileName');
-      
-      setState(() {
-        _imageFile = savedImage;
-      });
-    }
-  }
-
   void _scanBarcode() async {
     final result = await Navigator.push(
       context,
@@ -82,16 +72,57 @@ class _AddProductScreenState extends State<AddProductScreen> {
     if (result != null && result is String) {
       setState(() {
         _barcodeController.text = result;
+        _autoGenerateBarcode = false; // Disable auto-generate when manually scanned
       });
     }
   }
 
+  Future<void> _generateBarcode() async {
+    final productViewModel = context.read<ProductViewModel>();
+    
+    // Get the highest product ID to generate a unique barcode
+    int maxId = 0;
+    if (productViewModel.products.isNotEmpty) {
+      maxId = productViewModel.products
+          .map((p) => p.id ?? 0)
+          .reduce((a, b) => a > b ? a : b);
+    }
+    
+    // Generate a unique barcode
+    final barcode = _barcodeService.generateBarcode(maxId + 1);
+    
+    setState(() {
+      _barcodeController.text = barcode;
+    });
+
+    // Show success message
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Generated barcode: ${_barcodeService.formatBarcode(barcode)}'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
   Future<void> _saveProduct() async {
     if (_formKey.currentState!.validate()) {
+      // Auto-generate barcode if enabled and barcode is empty
+      String barcode = _barcodeController.text.trim();
+      if (_autoGenerateBarcode && barcode.isEmpty) {
+        final productViewModel = context.read<ProductViewModel>();
+        int maxId = 0;
+        if (productViewModel.products.isNotEmpty) {
+          maxId = productViewModel.products
+              .map((p) => p.id ?? 0)
+              .reduce((a, b) => a > b ? a : b);
+        }
+        barcode = _barcodeService.generateBarcode(maxId + 1);
+      }
+
       final product = Product(
         id: widget.product?.id,
         name: _nameController.text,
-        barcode: _barcodeController.text,
+        barcode: barcode,
         costPrice: double.tryParse(_costPriceController.text) ?? 0.0,
         sellingPrice: double.tryParse(_sellingPriceController.text) ?? 0.0,
         stockQuantity: int.tryParse(_stockController.text) ?? 0,
@@ -125,108 +156,140 @@ class _AddProductScreenState extends State<AddProductScreen> {
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
             child: Column(
               children: [
-                GestureDetector(
-                  onTap: _pickImage,
-                  child: CircleAvatar(
-                    radius: 50,
-                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    backgroundImage: _imageFile != null ? FileImage(_imageFile!) : null,
-                    child: _imageFile == null
-                        ? Icon(Icons.add_a_photo, size: 30, color: Theme.of(context).colorScheme.onSurfaceVariant)
-                        : null,
-                  ),
+                ImagePickerAvatar(
+                  initialImage: _imageFile,
+                  onImageChanged: (file) {
+                    setState(() {
+                      _imageFile = file;
+                    });
+                  },
+                  radius: 50,
                 ),
-                const SizedBox(height: 16),
-                TextFormField(
+                const VerticalSpace.lg(),
+                CustomTextField(
                   controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Product Name',
-                    border: OutlineInputBorder(),
-                    filled: true,
-                  ),
+                  labelText: 'Product Name',
                   validator: (value) => value!.isEmpty ? 'Required' : null,
                 ),
-                const SizedBox(height: 16),
+                const VerticalSpace.lg(),
+                BarcodeField(
+                  controller: _barcodeController,
+                  onScan: _scanBarcode,
+                ),
+                const VerticalSpace.sm(),
+                
+                // Barcode generation options
                 Row(
                   children: [
                     Expanded(
-                      child: TextFormField(
-                        controller: _barcodeController,
-                        decoration: const InputDecoration(
-                          labelText: 'Barcode',
-                          border: OutlineInputBorder(),
-                          filled: true,
+                      child: CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Auto-generate barcode',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                        subtitle: const Text(
+                          'Generate if not provided',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                        value: _autoGenerateBarcode,
+                        onChanged: widget.product == null 
+                            ? (value) => setState(() => _autoGenerateBarcode = value ?? false)
+                            : null, // Disable for existing products
+                        dense: true,
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: widget.product == null ? _generateBarcode : null,
+                      icon: const Icon(Icons.qr_code, size: 18),
+                      label: const Text('Generate'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.md,
+                          vertical: AppSpacing.sm,
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    IconButton.filledTonal(
-                      icon: const Icon(Icons.qr_code_scanner),
-                      onPressed: _scanBarcode,
-                    ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                
+                // Display validation info if barcode exists
+                if (_barcodeController.text.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.xs),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _barcodeService.validateEan13(_barcodeController.text)
+                              ? Icons.check_circle
+                              : Icons.info,
+                          size: 16,
+                          color: _barcodeService.validateEan13(_barcodeController.text)
+                              ? Colors.green
+                              : Colors.orange,
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Expanded(
+                          child: Text(
+                            _barcodeService.isInternallyGenerated(_barcodeController.text)
+                                ? 'System-generated barcode'
+                                : _barcodeService.validateEan13(_barcodeController.text)
+                                    ? 'Valid EAN-13 barcode'
+                                    : 'Custom barcode format',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const VerticalSpace.lg(),
                 Row(
                   children: [
                     Expanded(
-                      child: TextFormField(
+                      child: CurrencyTextField(
                         controller: _costPriceController,
-                        decoration: const InputDecoration(
-                          labelText: 'Cost Price',
-                          border: OutlineInputBorder(),
-                          filled: true,
-                          prefixText: '\$ ',
-                        ),
-                        keyboardType: TextInputType.number,
+                        labelText: 'Cost Price',
                         validator: (value) => value!.isEmpty ? 'Required' : null,
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    const HorizontalSpace.lg(),
                     Expanded(
-                      child: TextFormField(
+                      child: CurrencyTextField(
                         controller: _sellingPriceController,
-                        decoration: const InputDecoration(
-                          labelText: 'Selling Price',
-                          border: OutlineInputBorder(),
-                          filled: true,
-                          prefixText: '\$ ',
-                        ),
-                        keyboardType: TextInputType.number,
+                        labelText: 'Selling Price',
                         validator: (value) => value!.isEmpty ? 'Required' : null,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const VerticalSpace.lg(),
                 Row(
                   children: [
                     Expanded(
-                      child: TextFormField(
+                      child: CustomTextField(
                         controller: _stockController,
-                        decoration: const InputDecoration(
-                          labelText: 'Stock Quantity',
-                          border: OutlineInputBorder(),
-                          filled: true,
-                        ),
+                        labelText: 'Stock Quantity',
                         keyboardType: TextInputType.number,
                         validator: (value) => value!.isEmpty ? 'Required' : null,
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    const HorizontalSpace.lg(),
                     Expanded(
                       child: Consumer<UnitViewModel>(
                         builder: (context, vm, child) {
                           return DropdownMenu<String>(
                             controller: _unitController,
                             label: const Text('Unit'),
-                            width: 150, // Should handle width nicely or wrap in flexible
+                            width: 150,
                             dropdownMenuEntries: vm.baseUnits.map((String unit) {
                               return DropdownMenuEntry<String>(
                                 value: unit,
@@ -241,7 +304,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
+                const VerticalSpace.xl(),
                 
                 // Only show "Manage Units" if editing an existing product
                 if (widget.product != null)
@@ -259,28 +322,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class SimpleScannerScreen extends StatelessWidget {
-  const SimpleScannerScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Scan Barcode')),
-      body: MobileScanner(
-        onDetect: (capture) {
-          final List<Barcode> barcodes = capture.barcodes;
-          for (final barcode in barcodes) {
-            if (barcode.rawValue != null) {
-              Navigator.pop(context, barcode.rawValue);
-              break; // Return first detected
-            }
-          }
-        },
       ),
     );
   }

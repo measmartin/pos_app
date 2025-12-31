@@ -23,7 +23,7 @@ class DatabaseService {
     String path = join(await getDatabasesPath(), 'pos_app.db');
     return await openDatabase(
       path,
-      version: 6,
+      version: 14,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -57,6 +57,14 @@ class DatabaseService {
     await _createProductUnitsTable(db);
     await _createPurchaseItemsTable(db);
     await _createUnitDefinitionsTable(db);
+    await _createAccountingTables(db);
+    await _seedChartOfAccounts(db);
+    await _createStockAdjustmentsTable(db);
+    await _createCustomersTable(db);
+    await _createTransactionsTable(db);
+    await _createReturnsTable(db);
+    await _createHeldTransactionsTable(db);
+    await _createSettingsTable(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -76,6 +84,31 @@ class DatabaseService {
     if (oldVersion < 6) {
       await db.execute('ALTER TABLE sale_items ADD COLUMN is_deleted INTEGER DEFAULT 0');
       await db.execute('ALTER TABLE purchase_items ADD COLUMN is_deleted INTEGER DEFAULT 0');
+    }
+    if (oldVersion < 7) {
+      await _createAccountingTables(db);
+      await _seedChartOfAccounts(db);
+    }
+    if (oldVersion < 8) {
+      await _createStockAdjustmentsTable(db);
+    }
+    if (oldVersion < 9) {
+      await _createCustomersTable(db);
+    }
+    if (oldVersion < 10) {
+      await _createTransactionsTable(db);
+    }
+    if (oldVersion < 11) {
+      await _createReturnsTable(db);
+    }
+    if (oldVersion < 12) {
+      await _createHeldTransactionsTable(db);
+    }
+    if (oldVersion < 13) {
+      await _addPerformanceIndexes(db);
+    }
+    if (oldVersion < 14) {
+      await _createSettingsTable(db);
     }
   }
 
@@ -129,6 +162,296 @@ class DatabaseService {
         FOREIGN KEY(product_id) REFERENCES products(id)
       )
     ''');
+  }
+
+  Future<void> _createAccountingTables(Database db) async {
+    // Accounts table - Chart of Accounts
+    await db.execute('''
+      CREATE TABLE accounts(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        parent_id INTEGER,
+        balance REAL DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        FOREIGN KEY(parent_id) REFERENCES accounts(id)
+      )
+    ''');
+
+    // Journal Headers - Main journal entry
+    await db.execute('''
+      CREATE TABLE journal_headers(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        description TEXT NOT NULL,
+        reference_type TEXT,
+        reference_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        is_voided INTEGER DEFAULT 0
+      )
+    ''');
+
+    // Journal Lines - Double-entry lines
+    await db.execute('''
+      CREATE TABLE journal_lines(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        header_id INTEGER NOT NULL,
+        account_id INTEGER NOT NULL,
+        debit REAL DEFAULT 0,
+        credit REAL DEFAULT 0,
+        description TEXT,
+        FOREIGN KEY(header_id) REFERENCES journal_headers(id) ON DELETE CASCADE,
+        FOREIGN KEY(account_id) REFERENCES accounts(id),
+        CHECK (debit >= 0 AND credit >= 0),
+        CHECK (NOT (debit > 0 AND credit > 0))
+      )
+    ''');
+
+    // Create indexes for better query performance
+    await db.execute('CREATE INDEX idx_journal_lines_header ON journal_lines(header_id)');
+    await db.execute('CREATE INDEX idx_journal_lines_account ON journal_lines(account_id)');
+    await db.execute('CREATE INDEX idx_journal_headers_date ON journal_headers(date)');
+  }
+
+  Future<void> _seedChartOfAccounts(Database db) async {
+    // Seed default chart of accounts
+    final accounts = [
+      // Assets (1000-1999)
+      {'code': '1000', 'name': 'Cash on Hand - USD', 'type': 'ASSET'},
+      {'code': '1100', 'name': 'Inventory - USD', 'type': 'ASSET'},
+      {'code': '1200', 'name': 'Accounts Receivable', 'type': 'ASSET'},
+      {'code': '1300', 'name': 'Equipment', 'type': 'ASSET'},
+      
+      // Liabilities (2000-2999)
+      {'code': '2000', 'name': 'Accounts Payable', 'type': 'LIABILITY'},
+      {'code': '2100', 'name': 'Sales Tax Payable', 'type': 'LIABILITY'},
+      
+      // Equity (3000-3999)
+      {'code': '3000', 'name': 'Owner Equity', 'type': 'EQUITY'},
+      {'code': '3100', 'name': 'Retained Earnings', 'type': 'EQUITY'},
+      
+      // Revenue (4000-4999)
+      {'code': '4000', 'name': 'Sales Revenue - USD', 'type': 'REVENUE'},
+      {'code': '4100', 'name': 'Other Income', 'type': 'REVENUE'},
+      
+      // Expenses (5000-5999)
+      {'code': '5000', 'name': 'Cost of Goods Sold', 'type': 'EXPENSE'},
+      {'code': '5100', 'name': 'Operating Expenses', 'type': 'EXPENSE'},
+      {'code': '5200', 'name': 'Utilities', 'type': 'EXPENSE'},
+      {'code': '5300', 'name': 'Rent', 'type': 'EXPENSE'},
+    ];
+
+    for (var account in accounts) {
+      await db.insert('accounts', account);
+    }
+  }
+
+  Future<void> _createStockAdjustmentsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE stock_adjustments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        quantity_change INTEGER NOT NULL,
+        old_quantity INTEGER NOT NULL,
+        new_quantity INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        notes TEXT,
+        date TEXT NOT NULL,
+        user_id TEXT,
+        FOREIGN KEY(product_id) REFERENCES products(id)
+      )
+    ''');
+    
+    // Create index for faster queries
+    await db.execute('CREATE INDEX idx_stock_adjustments_product ON stock_adjustments(product_id)');
+    await db.execute('CREATE INDEX idx_stock_adjustments_date ON stock_adjustments(date)');
+  }
+
+  Future<void> _createCustomersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE customers(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        loyalty_points REAL DEFAULT 0,
+        total_spent REAL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_purchase_date TEXT,
+        notes TEXT,
+        is_active INTEGER DEFAULT 1
+      )
+    ''');
+    
+    // Create indexes for faster queries
+    await db.execute('CREATE INDEX idx_customers_name ON customers(name)');
+    await db.execute('CREATE INDEX idx_customers_phone ON customers(phone)');
+    await db.execute('CREATE INDEX idx_customers_is_active ON customers(is_active)');
+    
+    // Add customer_id to sale_items table
+    await db.execute('ALTER TABLE sale_items ADD COLUMN customer_id INTEGER');
+    await db.execute('CREATE INDEX idx_sale_items_customer ON sale_items(customer_id)');
+  }
+
+  Future<void> _createTransactionsTable(Database db) async {
+    // Transactions table - groups sale_items into transactions
+    await db.execute('''
+      CREATE TABLE transactions(
+        id TEXT PRIMARY KEY,
+        customer_id INTEGER,
+        total_amount REAL NOT NULL,
+        discount_amount REAL DEFAULT 0,
+        final_amount REAL NOT NULL,
+        paid_amount REAL NOT NULL,
+        change_amount REAL DEFAULT 0,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        notes TEXT,
+        FOREIGN KEY(customer_id) REFERENCES customers(id)
+      )
+    ''');
+    
+    // Discounts table - stores discount information
+    await db.execute('''
+      CREATE TABLE discounts(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id TEXT,
+        type TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        value REAL NOT NULL,
+        reason TEXT,
+        item_key TEXT,
+        applied_at TEXT NOT NULL,
+        FOREIGN KEY(transaction_id) REFERENCES transactions(id)
+      )
+    ''');
+    
+    // Payments table - stores payment method information
+    await db.execute('''
+      CREATE TABLE payments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id TEXT NOT NULL,
+        method TEXT NOT NULL,
+        amount REAL NOT NULL,
+        reference TEXT,
+        notes TEXT,
+        paid_at TEXT NOT NULL,
+        FOREIGN KEY(transaction_id) REFERENCES transactions(id)
+      )
+    ''');
+    
+    // Add transaction_id to sale_items table
+    await db.execute('ALTER TABLE sale_items ADD COLUMN transaction_id TEXT');
+    await db.execute('ALTER TABLE sale_items ADD COLUMN discount_amount REAL DEFAULT 0');
+    await db.execute('ALTER TABLE sale_items ADD COLUMN unit_name TEXT');
+    
+    // Create indexes
+    await db.execute('CREATE INDEX idx_transactions_customer ON transactions(customer_id)');
+    await db.execute('CREATE INDEX idx_transactions_status ON transactions(status)');
+    await db.execute('CREATE INDEX idx_transactions_created_at ON transactions(created_at)');
+    await db.execute('CREATE INDEX idx_discounts_transaction ON discounts(transaction_id)');
+    await db.execute('CREATE INDEX idx_payments_transaction ON payments(transaction_id)');
+    await db.execute('CREATE INDEX idx_sale_items_transaction ON sale_items(transaction_id)');
+  }
+
+  Future<void> _createReturnsTable(Database db) async {
+    // Returns table - tracks product returns/refunds
+    await db.execute('''
+      CREATE TABLE returns(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sale_item_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        product_name TEXT NOT NULL,
+        quantity_returned INTEGER NOT NULL,
+        refund_amount REAL NOT NULL,
+        reason TEXT NOT NULL,
+        notes TEXT,
+        return_date TEXT NOT NULL,
+        transaction_id TEXT,
+        FOREIGN KEY(sale_item_id) REFERENCES sale_items(id),
+        FOREIGN KEY(product_id) REFERENCES products(id)
+      )
+    ''');
+    
+    // Create indexes
+    await db.execute('CREATE INDEX idx_returns_sale_item ON returns(sale_item_id)');
+    await db.execute('CREATE INDEX idx_returns_product ON returns(product_id)');
+    await db.execute('CREATE INDEX idx_returns_date ON returns(return_date)');
+    await db.execute('CREATE INDEX idx_returns_transaction ON returns(transaction_id)');
+    
+    // Add returned_quantity to sale_items to track partial returns
+    await db.execute('ALTER TABLE sale_items ADD COLUMN returned_quantity INTEGER DEFAULT 0');
+  }
+
+  Future<void> _createHeldTransactionsTable(Database db) async {
+    // Held transactions table - stores parked/held transactions
+    await db.execute('''
+      CREATE TABLE held_transactions(
+        id TEXT PRIMARY KEY,
+        cart_data TEXT NOT NULL,
+        customer_id INTEGER,
+        created_at TEXT NOT NULL,
+        notes TEXT
+      )
+    ''');
+    
+    // Create indexes
+    await db.execute('CREATE INDEX idx_held_transactions_created ON held_transactions(created_at)');
+    await db.execute('CREATE INDEX idx_held_transactions_customer ON held_transactions(customer_id)');
+  }
+
+  Future<void> _createSettingsTable(Database db) async {
+    // Settings table - stores app configuration
+    await db.execute('''
+      CREATE TABLE settings(
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        business_name TEXT NOT NULL DEFAULT 'My Shop',
+        business_address TEXT,
+        business_phone TEXT,
+        business_email TEXT,
+        tax_id TEXT,
+        tax_rate REAL DEFAULT 0.0,
+        currency_symbol TEXT DEFAULT '\$',
+        receipt_header TEXT DEFAULT 'Thank you for your purchase!',
+        receipt_footer TEXT DEFAULT 'Please come again',
+        enable_loyalty_program INTEGER DEFAULT 1,
+        enable_low_stock_alerts INTEGER DEFAULT 1,
+        low_stock_threshold INTEGER DEFAULT 10,
+        print_receipt_automatically INTEGER DEFAULT 0
+      )
+    ''');
+    
+    // Insert default settings
+    await db.execute('''
+      INSERT INTO settings (id, business_name, currency_symbol, receipt_header, receipt_footer)
+      VALUES (1, 'My Shop', '\$', 'Thank you for your purchase!', 'Please come again')
+    ''');
+  }
+
+  Future<void> _addPerformanceIndexes(Database db) async {
+    // Products indexes
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_products_stock ON products(stockQuantity)');
+    
+    // Product units index
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_product_units_product ON product_units(product_id)');
+    
+    // Sale items composite indexes
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_sale_items_product_deleted ON sale_items(product_id, is_deleted)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_sale_items_date_deleted ON sale_items(date, is_deleted)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_sale_items_product_date_deleted ON sale_items(product_id, date, is_deleted)');
+    
+    // Purchase items indexes
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_purchase_items_product_deleted ON purchase_items(product_id, is_deleted)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_purchase_items_date ON purchase_items(date)');
+    
+    // Customers index
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)');
   }
 
   // History Methods
@@ -369,5 +692,31 @@ class DatabaseService {
     }
     
     return units.toList()..sort();
+  }
+
+  // Settings Methods
+  Future<Map<String, dynamic>?> getSettings() async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query('settings', where: 'id = 1');
+    
+    if (maps.isEmpty) {
+      // Insert default settings if not exist
+      await db.execute('''
+        INSERT OR IGNORE INTO settings (id, business_name, currency_symbol, receipt_header, receipt_footer)
+        VALUES (1, 'My Shop', '\$', 'Thank you for your purchase!', 'Please come again')
+      ''');
+      return (await db.query('settings', where: 'id = 1')).firstOrNull;
+    }
+    
+    return maps.first;
+  }
+
+  Future<void> updateSettings(Map<String, dynamic> settings) async {
+    final db = await database;
+    await db.update(
+      'settings',
+      settings,
+      where: 'id = 1',
+    );
   }
 }

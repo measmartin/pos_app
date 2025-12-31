@@ -7,26 +7,82 @@ class ProductViewModel extends ChangeNotifier {
   List<Product> _products = [];
   List<Product> get products => _products;
 
+  bool _isLoading = false;
+  bool get isLoading => _isLoading;
+
   final DatabaseService _databaseService = DatabaseService();
 
   Future<List<Product>> fetchTrendingProducts() async {
     return await _databaseService.getTrendingProducts();
   }
 
+  /// Fetch products with optimized single-query approach
+  /// Uses LEFT JOIN to avoid N+1 query problem
   Future<void> fetchProducts() async {
-    final db = await _databaseService.database;
-    final List<Map<String, dynamic>> maps = await db.query('products');
-    
-    // We need to fetch units for each product
-    _products = [];
-    for (var map in maps) {
-      var product = Product.fromMap(map);
-      // Fetch units
-      final unitsMap = await db.query('product_units', where: 'product_id = ?', whereArgs: [product.id]);
-      product.additionalUnits = unitsMap.map((m) => ProductUnit.fromMap(m)).toList();
-      _products.add(product);
-    }
+    _isLoading = true;
     notifyListeners();
+
+    try {
+      final db = await _databaseService.database;
+      
+      // Single query with LEFT JOIN instead of N+1 queries
+      final result = await db.rawQuery('''
+        SELECT 
+          p.id as product_id,
+          p.name as product_name,
+          p.barcode,
+          p.costPrice,
+          p.sellingPrice,
+          p.stockQuantity,
+          p.unit,
+          p.image_path,
+          pu.id as unit_id,
+          pu.name as unit_name,
+          pu.factor as unit_factor,
+          pu.selling_price as unit_selling_price
+        FROM products p
+        LEFT JOIN product_units pu ON p.id = pu.product_id
+        ORDER BY p.name ASC
+      ''');
+      
+      // Group results by product
+      final productMap = <int, Product>{};
+      
+      for (var row in result) {
+        final productId = row['product_id'] as int;
+        
+        // Create product if not already in map
+        if (!productMap.containsKey(productId)) {
+          productMap[productId] = Product(
+            id: productId,
+            name: row['product_name'] as String,
+            barcode: (row['barcode'] as String?) ?? '',
+            costPrice: (row['costPrice'] as num?)?.toDouble() ?? 0.0,
+            sellingPrice: (row['sellingPrice'] as num?)?.toDouble() ?? 0.0,
+            stockQuantity: (row['stockQuantity'] as int?) ?? 0,
+            unit: (row['unit'] as String?) ?? '',
+            imagePath: row['image_path'] as String?,
+            additionalUnits: [],
+          );
+        }
+        
+        // Add unit if present
+        if (row['unit_id'] != null) {
+          productMap[productId]!.additionalUnits.add(ProductUnit(
+            id: row['unit_id'] as int,
+            productId: productId,
+            name: row['unit_name'] as String,
+            factor: (row['unit_factor'] as num).toDouble(),
+            sellingPrice: (row['unit_selling_price'] as num?)?.toDouble(),
+          ));
+        }
+      }
+      
+      _products = productMap.values.toList();
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
   
   Future<void> addProductUnit(ProductUnit unit) async {

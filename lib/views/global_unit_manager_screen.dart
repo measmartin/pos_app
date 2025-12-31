@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/unit_definition.dart';
 import '../view_models/unit_view_model.dart';
+import '../widgets/forms/custom_text_field.dart';
+import '../widgets/dropdowns/base_unit_dropdown.dart';
+import '../widgets/common/empty_state.dart';
+import '../widgets/common/spacing.dart';
+import '../theme/app_spacing.dart';
 
 class GlobalUnitManagerScreen extends StatefulWidget {
   const GlobalUnitManagerScreen({super.key});
@@ -22,92 +27,111 @@ class _GlobalUnitManagerScreenState extends State<GlobalUnitManagerScreen> {
 
   void _showAddDialog() {
     final nameController = TextEditingController();
-    final baseController = TextEditingController(); // e.g., "Can"
     final factorController = TextEditingController();
+    String? selectedBaseUnit;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Define New Global Unit'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Unit Name (e.g. Pack)'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final unitViewModel = context.watch<UnitViewModel>();
+          
+          return AlertDialog(
+            title: const Text('Define New Global Unit'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CustomTextField(
+                    controller: nameController,
+                    labelText: 'Unit Name (e.g. Pack)',
+                  ),
+                  const VerticalSpace.lg(),
+                  
+                  BaseUnitDropdown(
+                    selectedUnit: selectedBaseUnit,
+                    availableUnits: unitViewModel.baseUnits,
+                    onChanged: (unit) {
+                      setDialogState(() {
+                        selectedBaseUnit = unit;
+                      });
+                    },
+                    labelText: 'Base Unit Name',
+                    width: 230,
+                  ),
+                  
+                  const VerticalSpace.lg(),
+                  CustomTextField(
+                    controller: factorController,
+                    labelText: 'Factor (e.g. 6)',
+                    keyboardType: TextInputType.number,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 16),
-            
-            Consumer<UnitViewModel>(
-              builder: (context, vm, child) {
-                return DropdownMenu<String>(
-                  controller: baseController,
-                  label: const Text('Base Unit Name'),
-                  width: 230,
-                  dropdownMenuEntries: vm.baseUnits.map((String unit) {
-                    return DropdownMenuEntry<String>(
-                      value: unit,
-                      label: unit,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  if (nameController.text.isNotEmpty && 
+                      selectedBaseUnit != null && 
+                      factorController.text.isNotEmpty) {
+                    
+                    final def = UnitDefinition(
+                      name: nameController.text,
+                      baseUnit: selectedBaseUnit!,
+                      factor: double.parse(factorController.text),
                     );
-                  }).toList(),
-                  enableSearch: true,
-                  requestFocusOnTap: true,
-                );
-              }
-            ),
-            
-            const SizedBox(height: 16),
-            TextField(
-              controller: factorController,
-              decoration: const InputDecoration(labelText: 'Factor (e.g. 6)'),
-              keyboardType: TextInputType.number,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () {
-              if (nameController.text.isNotEmpty && 
-                  baseController.text.isNotEmpty && 
-                  factorController.text.isNotEmpty) {
-                
-                final def = UnitDefinition(
-                  name: nameController.text,
-                  baseUnit: baseController.text,
-                  factor: double.parse(factorController.text),
-                );
-                
-                context.read<UnitViewModel>().addUnitDefinition(def);
-                Navigator.pop(context);
-              }
-            }, 
-            child: const Text('Save')
-          ),
-        ],
+                    
+                    context.read<UnitViewModel>().addUnitDefinition(def);
+                    Navigator.pop(context);
+                  }
+                }, 
+                child: const Text('Save')
+              ),
+            ],
+          );
+        }
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     return Scaffold(
       appBar: AppBar(title: const Text('Unit Management')),
       body: Consumer<UnitViewModel>(
         builder: (context, vm, child) {
           if (vm.unitDefinitions.isEmpty) {
-            return const Center(child: Text('No units defined yet.'));
+            return EmptyState(
+              icon: Icons.straighten,
+              message: 'No units defined yet',
+              actionLabel: 'Add Unit',
+              onAction: _showAddDialog,
+            );
           }
           return ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
             itemCount: vm.unitDefinitions.length,
             itemBuilder: (context, index) {
               final unit = vm.unitDefinitions[index];
               return ListTile(
+                leading: const Icon(Icons.straighten),
                 title: Text(unit.name),
                 subtitle: Text('1 ${unit.name} = ${unit.factor} ${unit.baseUnit}'),
                 trailing: IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
+                  icon: Icon(
+                    Icons.delete,
+                    color: theme.colorScheme.error,
+                  ),
                   onPressed: () => vm.deleteUnitDefinition(unit.id!),
+                  tooltip: 'Delete unit definition',
                 ),
               );
             },
@@ -116,6 +140,7 @@ class _GlobalUnitManagerScreenState extends State<GlobalUnitManagerScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddDialog,
+        tooltip: 'Add unit definition',
         child: const Icon(Icons.add),
       ),
     );

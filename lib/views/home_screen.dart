@@ -3,6 +3,7 @@ import 'dashboard_screen.dart';
 import 'pos_screen.dart';
 import 'product_list_screen.dart';
 import 'journal_screen.dart';
+import 'customer_list_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,6 +19,7 @@ class _HomeScreenState extends State<HomeScreen> {
     DashboardScreen(),
     POSScreen(),
     ProductListScreen(),
+    CustomerListScreen(),
     JournalScreen(),
   ];
 
@@ -49,6 +51,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icon(Icons.inventory_2_outlined),
             selectedIcon: Icon(Icons.inventory_2),
             label: 'Products',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.people_outlined),
+            selectedIcon: Icon(Icons.people),
+            label: 'Customers',
           ),
           NavigationDestination(
             icon: Icon(Icons.book_outlined),

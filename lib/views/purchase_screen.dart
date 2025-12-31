@@ -3,9 +3,17 @@ import 'package:provider/provider.dart';
 import '../models/product.dart';
 import '../models/product_unit.dart';
 import '../models/purchase_item.dart';
-import '../models/journal_entry.dart';
 import '../view_models/product_view_model.dart';
 import '../services/database_service.dart';
+import '../widgets/forms/search_field.dart';
+import '../widgets/forms/custom_text_field.dart';
+import '../widgets/forms/currency_text_field.dart';
+import '../widgets/buttons/wide_action_button.dart';
+import '../widgets/dropdowns/product_unit_dropdown.dart';
+import '../widgets/product/product_list_item.dart';
+import '../widgets/common/empty_state.dart';
+import '../widgets/common/spacing.dart';
+import '../theme/app_spacing.dart';
 import 'add_product_screen.dart';
 
 class PurchaseScreen extends StatefulWidget {
@@ -153,105 +161,108 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
   @override
   Widget build(BuildContext context) {
     final products = context.watch<ProductViewModel>().products;
+    final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Purchase (Incoming Stock)')),
+      appBar: AppBar(
+        title: const Text('Purchase (Incoming Stock)'),
+        actions: [
+          // Add product button in app bar
+          IconButton(
+            icon: const Icon(Icons.add_circle),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const AddProductScreen(product: null),
+                  fullscreenDialog: true,
+                ),
+              );
+            },
+            tooltip: 'Add new product',
+          ),
+        ],
+      ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           children: [
             // 1. Search or Add Product
             if (_selectedProduct == null) ...[
-              TextField(
+              SearchField(
                 controller: _searchController,
-                decoration: InputDecoration(
-                  labelText: 'Search Product to Restock',
-                  prefixIcon: const Icon(Icons.search),
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.add_circle),
-                    onPressed: () {
-                       // Quick Add Product
-                       Navigator.push(
-                         context, 
-                         MaterialPageRoute(builder: (_) => const AddProductScreen(product: null), fullscreenDialog: true)
-                       );
-                    },
-                  ),
-                ),
+                hintText: 'Search Product to Restock',
+                onChanged: (value) => setState(() {}),
               ),
-              const SizedBox(height: 10),
+              const VerticalSpace.md(),
               if (_searchController.text.isNotEmpty)
                 Expanded(
                   child: ListView(
-                    children: products.where((p) => 
-                      p.name.toLowerCase().contains(_searchController.text.toLowerCase())
-                    ).map((product) => ListTile(
-                      title: Text(product.name),
-                      subtitle: Text('Current Stock: ${product.stockQuantity} ${product.unit}'),
-                      onTap: () => _selectProduct(product),
-                    )).toList(),
+                    children: products
+                        .where((p) => p.name.toLowerCase().contains(
+                            _searchController.text.toLowerCase()))
+                        .map((product) => ProductListItem(
+                              product: product,
+                              subtitle: 'Current Stock: ${product.stockQuantity} ${product.unit}',
+                              onTap: () => _selectProduct(product),
+                            ))
+                        .toList(),
                   ),
                 )
-              else 
-                const Expanded(child: Center(child: Text('Search for a product or add a new one.'))),
+              else
+                const Expanded(
+                  child: EmptyState(
+                    icon: Icons.search,
+                    message: 'Search for a product or add a new one',
+                  ),
+                ),
             ] else ...[
               // 2. Product Selected - Entry Form
               Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+                  padding: const EdgeInsets.all(AppSpacing.lg),
                   child: Column(
                     children: [
                       Row(
                         children: [
-                           Text(_selectedProduct!.name, style: Theme.of(context).textTheme.headlineSmall),
-                           const Spacer(),
-                           IconButton(
-                             icon: const Icon(Icons.close), 
-                             onPressed: () => setState(() => _selectedProduct = null),
-                           )
+                          Text(
+                            _selectedProduct!.name,
+                            style: theme.textTheme.headlineSmall,
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => setState(() => _selectedProduct = null),
+                            tooltip: 'Clear selection',
+                          )
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const VerticalSpace.lg(),
                       // Unit Selection
-                      DropdownButtonFormField<ProductUnit?>(
-                        initialValue: _selectedUnit,
-                        decoration: const InputDecoration(labelText: 'Unit', border: OutlineInputBorder()),
-                        items: [
-                          DropdownMenuItem(
-                            value: null, 
-                            child: Text('Base Unit (${_selectedProduct!.unit})'),
-                          ),
-                          ..._selectedProduct!.additionalUnits.map((u) => DropdownMenuItem(
-                            value: u,
-                            child: Text('${u.name} (x${u.factor.toInt()})'),
-                          ))
-                        ],
+                      ProductUnitDropdown(
+                        product: _selectedProduct!,
+                        selectedUnit: _selectedUnit,
                         onChanged: (value) {
                           setState(() {
                             _selectedUnit = value;
                           });
                         },
                       ),
-                      const SizedBox(height: 16),
-                      TextField(
+                      const VerticalSpace.lg(),
+                      CustomTextField(
                         controller: _quantityController,
-                        decoration: const InputDecoration(labelText: 'Quantity', border: OutlineInputBorder()),
+                        labelText: 'Quantity',
                         keyboardType: TextInputType.number,
                       ),
-                      const SizedBox(height: 16),
-                      TextField(
+                      const VerticalSpace.lg(),
+                      CurrencyTextField(
                         controller: _costPriceController,
-                        decoration: const InputDecoration(labelText: 'Cost Price (Per Unit)', border: OutlineInputBorder(), prefixText: '\$'),
-                        keyboardType: TextInputType.number,
+                        labelText: 'Cost Price (Per Unit)',
                       ),
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: _processPurchase, 
-                          child: const Text('CONFIRM PURCHASE')
-                        ),
+                      const VerticalSpace.xl(),
+                      WideActionButton(
+                        onPressed: _processPurchase,
+                        label: 'CONFIRM PURCHASE',
                       ),
                     ],
                   ),

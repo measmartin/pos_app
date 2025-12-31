@@ -1,15 +1,30 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../view_models/journal_view_model.dart';
 import '../view_models/product_view_model.dart';
-import '../models/product.dart';
+import '../view_models/customer_view_model.dart';
+import '../services/notification_service.dart';
+import '../widgets/buttons/quick_action_button.dart';
+import '../widgets/dashboard/sales_metrics_grid.dart';
+import '../widgets/dashboard/trending_products_carousel.dart';
+import '../widgets/dashboard/low_stock_alert.dart';
+import '../widgets/dashboard/reports_section.dart';
+import '../widgets/dashboard/customer_stats_card.dart';
+import '../widgets/common/spacing.dart';
+import '../theme/app_spacing.dart';
+import '../services/report_service.dart';
 import 'purchase_screen.dart';
 import 'pos_screen.dart';
 import 'global_unit_manager_screen.dart';
 import 'sale_history_screen.dart';
 import 'purchase_history_screen.dart';
+import 'sales_report_screen.dart';
+import 'inventory_report_screen.dart';
+import 'financial_report_screen.dart';
+import 'stock_adjustment_history_screen.dart';
+import 'settings_screen.dart';
+import 'backup_screen.dart';
+import 'help_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -19,6 +34,10 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  final ReportService _reportService = ReportService();
+  final NotificationService _notificationService = NotificationService();
+  int _lowStockCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -26,11 +45,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<JournalViewModel>().fetchEntries();
       context.read<ProductViewModel>().fetchProducts();
+      context.read<CustomerViewModel>().fetchCustomers();
+      _loadLowStockCount();
+      _checkLowStockAndNotify();
     });
+  }
+
+  Future<void> _loadLowStockCount() async {
+    final count = await _reportService.getLowStockCount();
+    if (mounted) {
+      setState(() => _lowStockCount = count);
+    }
+  }
+
+  Future<void> _checkLowStockAndNotify() async {
+    // Check for low stock and send notification if needed
+    await _notificationService.checkLowStockAndNotify();
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dashboard'),
@@ -39,282 +75,213 @@ class _DashboardScreenState extends State<DashboardScreen> {
             icon: const Icon(Icons.history),
             tooltip: 'Sales History',
             onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const SaleHistoryScreen()));
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SaleHistoryScreen()),
+              );
             },
           ),
           IconButton(
             icon: const Icon(Icons.receipt_long),
             tooltip: 'Purchase History',
             onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseHistoryScreen()));
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PurchaseHistoryScreen()),
+              );
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: 'Manage Units',
-            onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const GlobalUnitManagerScreen()));
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'More options',
+            onSelected: (String value) {
+              switch (value) {
+                case 'settings':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                  break;
+                case 'backup':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const BackupScreen()),
+                  );
+                  break;
+                case 'help':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const HelpScreen()),
+                  );
+                  break;
+                case 'units':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const GlobalUnitManagerScreen()),
+                  );
+                  break;
+              }
             },
-          )
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings),
+                    SizedBox(width: 12),
+                    Text('Settings'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'backup',
+                child: Row(
+                  children: [
+                    Icon(Icons.backup),
+                    SizedBox(width: 12),
+                    Text('Backup & Restore'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'help',
+                child: Row(
+                  children: [
+                    Icon(Icons.help_outline),
+                    SizedBox(width: 12),
+                    Text('Help'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'units',
+                child: Row(
+                  children: [
+                    Icon(Icons.straighten),
+                    SizedBox(width: 12),
+                    Text('Manage Units'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Low Stock Alert
+            LowStockAlert(
+              lowStockCount: _lowStockCount,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const InventoryReportScreen()),
+                );
+              },
+            ),
+            if (_lowStockCount > 0) const VerticalSpace.lg(),
+
             // Quick Actions
             Row(
               children: [
                 Expanded(
-                  child: FilledButton.icon(
+                  child: QuickActionButton(
+                    label: 'New Sale',
+                    icon: Icons.point_of_sale,
                     onPressed: () {
-                      // Navigate to Sales (POS)
-                      // Since we use bottom nav, this might be tricky if we want to switch tab.
-                      // For now, push as a new screen or use global navigation key to switch tab.
-                      // Given current structure, we can push the POSScreen directly for a "Quick Sale" mode
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => const POSScreen()));
-                    }, 
-                    icon: const Icon(Icons.point_of_sale), 
-                    label: const Text('New Sale'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                    ),
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const POSScreen()),
+                      );
+                    },
+                    backgroundColor: theme.colorScheme.primary,
+                    foregroundColor: theme.colorScheme.onPrimary,
                   ),
                 ),
-                const SizedBox(width: 16),
+                const HorizontalSpace.lg(),
                 Expanded(
-                  child: FilledButton.icon(
+                  child: QuickActionButton(
+                    label: 'Purchase Stock',
+                    icon: Icons.shopping_cart_checkout,
                     onPressed: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseScreen()));
-                    }, 
-                    icon: const Icon(Icons.shopping_cart_checkout), 
-                    label: const Text('Purchase Stock'),
-                     style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      backgroundColor: Theme.of(context).colorScheme.tertiary,
-                      foregroundColor: Theme.of(context).colorScheme.onTertiary,
-                    ),
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const PurchaseScreen()),
+                      );
+                    },
+                    backgroundColor: theme.colorScheme.tertiary,
+                    foregroundColor: theme.colorScheme.onTertiary,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 24),
+            const VerticalSpace.xl(),
 
+            // Sales Overview Section
             Text(
               'Sales Overview',
-              style: Theme.of(context).textTheme.headlineSmall,
+              style: theme.textTheme.headlineSmall,
             ),
-            const SizedBox(height: 16.0),
-            _buildSalesCards(context),
-            const SizedBox(height: 32.0),
+            const VerticalSpace.lg(),
+            Consumer<JournalViewModel>(
+              builder: (context, viewModel, child) {
+                return SalesMetricsGrid(viewModel: viewModel);
+              },
+            ),
+            const VerticalSpace.xxl(),
+
+            // Customer Stats Section
+            Text(
+              'Customer Insights',
+              style: theme.textTheme.headlineSmall,
+            ),
+            const VerticalSpace.lg(),
+            const CustomerStatsCard(),
+            const VerticalSpace.xxl(),
+
+            // Reports Section
+            ReportsSection(
+              onSalesReportTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SalesReportScreen()),
+                );
+              },
+              onInventoryReportTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const InventoryReportScreen()),
+                );
+              },
+              onFinancialReportTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const FinancialReportScreen()),
+                );
+              },
+              onAdjustmentHistoryTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const StockAdjustmentHistoryScreen()),
+                );
+              },
+            ),
+            const VerticalSpace.xxl(),
+
+            // Trending Products Section
             Text(
               'Trending Products',
-              style: Theme.of(context).textTheme.headlineSmall,
+              style: theme.textTheme.headlineSmall,
             ),
-            const SizedBox(height: 16.0),
-            _buildTrendingCarousel(context),
+            const VerticalSpace.lg(),
+            TrendingProductsCarousel(
+              productsFuture: context.read<ProductViewModel>().fetchTrendingProducts(),
+            ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildSalesCards(BuildContext context) {
-    return Consumer<JournalViewModel>(
-      builder: (context, viewModel, child) {
-        return Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _buildSalesMetricCard(
-                    context,
-                    'Today\'s Sales',
-                    viewModel.getSalesToday(),
-                    Icons.today,
-                    Theme.of(context).colorScheme.primaryContainer,
-                    Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildSalesMetricCard(
-                    context,
-                    'This Week',
-                    viewModel.getSalesThisWeek(),
-                    Icons.date_range,
-                    Theme.of(context).colorScheme.tertiaryContainer,
-                    Theme.of(context).colorScheme.onTertiaryContainer,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildSalesMetricCard(
-                    context,
-                    'This Month',
-                    viewModel.getSalesThisMonth(),
-                    Icons.calendar_view_month,
-                    Theme.of(context).colorScheme.secondaryContainer,
-                    Theme.of(context).colorScheme.onSecondaryContainer,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildSalesMetricCard(
-                    context,
-                    'This Year',
-                    viewModel.getSalesThisYear(),
-                    Icons.calendar_today,
-                    // Use a different color or reuse one
-                    Theme.of(context).colorScheme.errorContainer,
-                    Theme.of(context).colorScheme.onErrorContainer,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildSalesMetricCard(
-    BuildContext context, 
-    String title, 
-    Future<double> futureValue, 
-    IconData icon,
-    Color backgroundColor,
-    Color foregroundColor,
-  ) {
-    return FutureBuilder<double>(
-      future: futureValue,
-      builder: (context, snapshot) {
-        final amount = snapshot.data ?? 0.0;
-        final formattedAmount = NumberFormat.currency(symbol: '\$').format(amount);
-
-        return Card(
-          elevation: 0,
-          color: backgroundColor,
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, color: foregroundColor),
-                const SizedBox(height: 12),
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: foregroundColor.withOpacity(0.8),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  formattedAmount,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: foregroundColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildTrendingCarousel(BuildContext context) {
-    return SizedBox(
-      height: 200,
-      child: FutureBuilder<List<Product>>(
-        future: context.read<ProductViewModel>().fetchTrendingProducts(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return Center(
-              child: Card(
-                elevation: 0,
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: const Padding(
-                  padding: EdgeInsets.all(32.0),
-                  child: Text('No sales data yet to show trending products.'),
-                ),
-              ),
-            );
-          }
-
-          final products = snapshot.data!;
-          return ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: products.length,
-            itemBuilder: (context, index) {
-              final product = products[index];
-              return Container(
-                width: 160,
-                margin: const EdgeInsets.only(right: 16.0),
-                child: Card(
-                  elevation: 2,
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Container(
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.secondaryContainer,
-                          ),
-                          child: product.imagePath != null
-                              ? Image.file(
-                                  File(product.imagePath!),
-                                  fit: BoxFit.cover,
-                                )
-                              : Center(
-                                  child: Icon(
-                                    Icons.shopping_bag,
-                                    size: 48,
-                                    color: Theme.of(context).colorScheme.onSecondaryContainer,
-                                  ),
-                                ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              product.name,
-                              style: Theme.of(context).textTheme.titleMedium,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              NumberFormat.currency(symbol: '\$').format(product.sellingPrice),
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          );
-        },
       ),
     );
   }

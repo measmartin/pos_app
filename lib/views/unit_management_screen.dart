@@ -3,7 +3,12 @@ import 'package:provider/provider.dart';
 import '../models/product.dart';
 import '../models/product_unit.dart';
 import '../view_models/product_view_model.dart';
-import '../view_models/unit_view_model.dart'; // Import UnitViewModel
+import '../view_models/unit_view_model.dart';
+import '../widgets/forms/custom_text_field.dart';
+import '../widgets/forms/currency_text_field.dart';
+import '../widgets/common/empty_state.dart';
+import '../widgets/common/spacing.dart';
+import '../theme/app_spacing.dart';
 
 class UnitManagementScreen extends StatefulWidget {
   final Product product;
@@ -39,56 +44,61 @@ class _UnitManagementScreenState extends State<UnitManagementScreen> {
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) {
+        builder: (context, setDialogState) {
           return AlertDialog(
             title: const Text('Add Unit'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (globalUnits.isNotEmpty)
-                  DropdownButtonFormField<int>(
-                    decoration: const InputDecoration(
-                      labelText: 'Select Pre-defined Unit',
-                      border: OutlineInputBorder(),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (globalUnits.isNotEmpty) ...[
+                    DropdownButtonFormField<int>(
+                      decoration: const InputDecoration(
+                        labelText: 'Select Pre-defined Unit',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: globalUnits.map((u) => DropdownMenuItem(
+                        value: u.id,
+                        child: Text('${u.name} (${u.factor} ${_currentProduct.unit})'),
+                      )).toList(),
+                      onChanged: (id) {
+                        final selected = globalUnits.firstWhere((u) => u.id == id);
+                        setDialogState(() {
+                          nameController.text = selected.name;
+                          factorController.text = selected.factor.toString();
+                        });
+                      },
                     ),
-                    items: globalUnits.map((u) => DropdownMenuItem(
-                      value: u.id,
-                      child: Text('${u.name} (${u.factor} ${_currentProduct.unit})'),
-                    )).toList(),
-                    onChanged: (id) {
-                      final selected = globalUnits.firstWhere((u) => u.id == id);
-                      nameController.text = selected.name;
-                      factorController.text = selected.factor.toString();
-                    },
+                    const VerticalSpace.lg(),
+                    Text(
+                      'Or define custom:',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const VerticalSpace.md(),
+                  ],
+                  
+                  CustomTextField(
+                    controller: nameController,
+                    labelText: 'Unit Name (e.g. Pack)',
                   ),
-                const SizedBox(height: 16),
-                const Text('Or define custom:', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Unit Name (e.g. Pack)'),
-                ),
-                const SizedBox(height: 16),
-                
-                TextField(
-                  controller: factorController,
-                  decoration: InputDecoration(
+                  const VerticalSpace.lg(),
+                  
+                  CustomTextField(
+                    controller: factorController,
                     labelText: 'Quantity in ${_currentProduct.unit}',
+                    keyboardType: TextInputType.number,
                   ),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 16),
+                  const VerticalSpace.lg(),
 
-                TextField(
-                  controller: priceController,
-                  decoration: const InputDecoration(
+                  CurrencyTextField(
+                    controller: priceController,
                     labelText: 'Selling Price (Optional Override)',
-                    prefixText: '\$',
                   ),
-                  keyboardType: TextInputType.number,
-                ),
-              ],
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -106,7 +116,9 @@ class _UnitManagementScreenState extends State<UnitManagementScreen> {
                     );
                     
                     await context.read<ProductViewModel>().addProductUnit(unit);
-                    if (mounted) Navigator.pop(context);
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                    }
                   }
                 },
                 child: const Text('Add'),
@@ -120,12 +132,18 @@ class _UnitManagementScreenState extends State<UnitManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     // Re-fetch product from VM to get latest units
     final product = context.select<ProductViewModel, Product?>(
       (vm) => vm.products.firstWhere((p) => p.id == widget.product.id, orElse: () => widget.product)
     );
 
-    if (product == null) return const Scaffold(body: Center(child: Text("Product not found")));
+    if (product == null) {
+      return const Scaffold(
+        body: Center(child: Text("Product not found")),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -134,30 +152,44 @@ class _UnitManagementScreenState extends State<UnitManagementScreen> {
       body: ListView(
         children: [
           ListTile(
+            leading: Icon(
+              Icons.check_circle,
+              color: theme.colorScheme.primary,
+            ),
             title: Text('Base Unit: ${product.unit}'),
             subtitle: const Text('Factor: 1.0 (Standard)'),
-            leading: const Icon(Icons.check_circle),
           ),
           const Divider(),
           if (product.additionalUnits.isEmpty)
-             const Padding(
-               padding: EdgeInsets.all(16.0),
-               child: Text('No additional units defined. Add one to sell in packs or boxes.'),
-             ),
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              child: EmptyState(
+                icon: Icons.inventory_2_outlined,
+                message: 'No additional units defined',
+                actionLabel: 'Add Unit',
+                onAction: () => _showAddUnitDialog(context),
+              ),
+            ),
           ...product.additionalUnits.map((unit) => ListTile(
+            leading: const Icon(Icons.category),
             title: Text(unit.name),
             subtitle: Text('Contains ${unit.factor} ${product.unit}'),
             trailing: IconButton(
-              icon: const Icon(Icons.delete, color: Colors.red),
+              icon: Icon(
+                Icons.delete,
+                color: theme.colorScheme.error,
+              ),
               onPressed: () {
                 context.read<ProductViewModel>().deleteProductUnit(unit.id!, product.id!);
               },
+              tooltip: 'Delete unit',
             ),
           )),
         ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddUnitDialog(context),
+        tooltip: 'Add unit',
         child: const Icon(Icons.add),
       ),
     );
